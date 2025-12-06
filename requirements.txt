@@ -1,4 +1,4 @@
-# requirements.txt #
+# requirements.txt
 Flask
 gunicorn
 requests
@@ -6,4 +6,3 @@ yfinance
 pandas
 numpy
 scipy
-
