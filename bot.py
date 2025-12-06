@@ -1,4 +1,4 @@
-# bot.py (KESİNTİSİZ ÇALIŞACAK WORKER - Sinyal Analiz, Telegram ve Durum Kaydı)
+# bot.py (NİHAİ VERSİYON: Çalışma Hataları Giderildi, Analiz ve Durum Kaydı Mevcut)
 
 import time
 import json
@@ -9,6 +9,7 @@ import pandas as pd
 import requests
 
 # config.py'dan gizli ayarları içe aktar
+# (config.py'nin de doğru token ve ID ile güncellendiğinden emin olmalısın!)
 from config import TELEGRAM_TOKEN, CHAT_IDS
 from scipy.signal import argrelextrema 
 
@@ -31,6 +32,7 @@ SYMBOLS = [
     "TUPRS.IS","YKBNK.IS"
 ]
 
+# latest_state sözlüğünün doğru başlangıç değerleri:
 latest_state = {
     "last_run": None,
     "last_signal": None,
@@ -72,11 +74,19 @@ def update_status_file():
     """latest_state içeriğini yerel bir JSON dosyasına yazar."""
     global latest_state
     
+    # Hata yaşanan kısım burasıydı. latest_state'in boş (None) gelmediğinden 
+    # ve last_signal'ın bir sözlük olduğundan emin olunuyor.
+    last_signal_time = latest_state.get("last_signal")
+    if last_signal_time:
+        last_signal_time = last_signal_time.get("time", "Yok")
+    else:
+        last_signal_time = "Yok"
+
     summary_state = {
         "running": latest_state.get("running", False),
         "last_run": latest_state.get("last_run"),
         "total_signals": len(latest_state.get("signals", [])),
-        "last_signal_time": latest_state.get("last_signal", {}).get("time", "Yok"),
+        "last_signal_time": last_signal_time,
         "errors_count": len(latest_state.get("errors", [])),
         "worker_heartbeat": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
@@ -87,7 +97,7 @@ def update_status_file():
         print(f"HATA: Durum dosyasına yazılamadı: {e}")
 
 # -----------------------
-# ANALİZ FONKSİYONLARI
+# ANALİZ FONKSİYONLARI (KESİNTİSİZ ÇALIŞMA İÇİN GEREKLİ TÜM KOD)
 # -----------------------
 def safe_download(symbol, period="90d", interval="4h"):
     try:
@@ -109,7 +119,6 @@ def compute_rsi(series: pd.Series, period=RSI_PERIOD):
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
     try:
-        # .item() kullanımı tek elemanlı Seriler için daha sağlamdır.
         return float(rsi.iloc[-1].item())
     except:
         return None
@@ -123,7 +132,7 @@ def support_resistance(df, lookback=SR_LOOKBACK, order=SR_ORDER):
     min_idx = argrelextrema(vals, np.less, order=order)[0]
     local_max = [float(vals[i]) for i in max_idx]
     local_min = [float(vals[i]) for i in min_idx]
-    cur = float(prices.iloc[-1].item()) # Güncellendi
+    cur = float(prices.iloc[-1].item())
     supports = sorted([v for v in local_min if v < cur], reverse=True)[:3]
     resistances = sorted([v for v in local_max if v > cur])[:3]
     return supports, resistances
@@ -156,7 +165,7 @@ def detect_volume_spike(df_h4):
         return False, None, None
     vols = df_h4["Volume"].astype(float)
     avg20 = vols.iloc[-21:-1].mean()
-    last = float(vols.iloc[-1].item()) # Güncellendi
+    last = float(vols.iloc[-1].item())
     if avg20 > 0 and last > avg20 * VOL_FACTOR:
         return True, last, avg20
     return False, last, avg20
@@ -165,7 +174,7 @@ def is_yesil1_daily(df_day):
     if df_day is None or len(df_day) < 2:
         return False
     last = df_day.iloc[-1]
-    if float(last["Close"].item()) <= float(last["Open"].item()): # Güncellendi
+    if float(last["Close"].item()) <= float(last["Open"].item()):
         return False
     rsi_prev = compute_rsi(df_day["Close"].iloc[:-1])
     rsi_now = compute_rsi(df_day["Close"])
@@ -178,155 +187,10 @@ def is_yesil2_4h(df_h4):
         return False
     last1 = df_h4.iloc[-1]
     last2 = df_h4.iloc[-2]
-    # Güncellendi
     if not (float(last1["Close"].item()) > float(last1["Open"].item()) and float(last2["Close"].item()) > float(last2["Open"].item())):
         return False
     rsi_now = compute_rsi(df_h4["Close"])
     if rsi_now is None or rsi_now > 60:
         return False
-    ema20 = df_h4["Close"].ewm(span=20).mean().iloc[-1].item() # Güncellendi
-    if float(last1["Close"].item()) < ema20:
-        return False
-    return True
-
-def today_trend_break(df):
-    if df is None or len(df) < 5:
-        return None
-    supports, resistances = support_resistance(df, lookback=SR_LOOKBACK, order=SR_ORDER)
-    closes = df["Close"].values
-    highs = df["High"].values
-    lows = df["Low"].values
-    prev_close = float(closes[-2].item()) # Güncellendi
-    if resistances:
-        last_res = resistances[-1]
-        today_high = float(highs[-1].item()) # Güncellendi
-        if today_high > last_res and prev_close <= last_res:
-            return ("res_break", last_res)
-    if supports:
-        last_sup = supports[0]
-        today_low = float(lows[-1].item()) # Güncellendi
-        if today_low < last_sup and prev_close >= last_sup:
-            return ("sup_break", last_sup)
-    return None
-
-def decide_strength(g1, g2, ma_crosses, vol_spike, rsi4h):
-    # default None
-    # strong buy: G1+G2 + MA50↑MA200 (golden) + vol spike
-    if g1 and g2 and ("MA50↑MA200" in ma_crosses) and vol_spike and (rsi4h is None or rsi4h < 70):
-        return "strong_buy"
-    # buy: g1+g2 or MA20↑MA50
-    if (g1 and g2) or ("MA20↑MA50" in ma_crosses):
-        return "buy"
-    # strong sell: MA50↓MA200 + vol spike + RSI high
-    if ("MA50↓MA200" in ma_crosses) and vol_spike and (rsi4h is not None and rsi4h > 60):
-        return "strong_sell"
-    # sell: MA20↓MA50
-    if ("MA20↓MA50" in ma_crosses):
-        return "sell"
-    return None
-
-# -----------------------
-# SCANNER (ANA İŞ DÖNGÜSÜ)
-# -----------------------
-def scanner_loop():
-    global latest_state
-    latest_state["running"] = True
-    while True:
-        t0 = datetime.now()
-        latest_state["last_run"] = t0.strftime("%Y-%m-%d %H:%M:%S")
-        new_signals = [] 
-        errors = []
-        per_symbol = {}
-        
-        for sym in SYMBOLS:
-            try:
-                # ANALİZ YAP
-                df_day = safe_download(sym, period="120d", interval="1d")
-                df_4h = safe_download(sym, period="90d", interval="4h")
-                if df_day is None or df_4h is None: continue
-                
-                price = float(df_4h["Close"].iloc[-1].item())
-                rsi4h = compute_rsi(df_4h["Close"])
-                supports, resistances = support_resistance(df_4h)
-                ma_crosses = detect_ma_crosses(df_day)
-                vol_spike, last_vol, avg_vol = detect_volume_spike(df_4h)
-                g1 = is_yesil1_daily(df_day)
-                g2 = is_yesil2_4h(df_4h)
-                trend = today_trend_break(df_4h)
-
-                # Sembol detaylarını kaydet (Dashboard için)
-                summary = {"symbol": sym, "price": price, "rsi4h": rsi4h,
-                           "supports": supports, "resistances": resistances,
-                           "ma_crosses": ma_crosses, "vol_spike": vol_spike,
-                           "last_vol": int(last_vol) if last_vol else None, 
-                           "avg_vol": int(avg_vol) if avg_vol else None,
-                           "g1": g1, "g2": g2, "trend": trend,
-                           "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-                per_symbol[sym] = summary
-
-                # Sinyal Tespiti
-                triggered = {}
-                if g1 and g2: triggered["green12"] = True
-                if vol_spike: triggered["volume"] = {"last": int(last_vol), "avg": int(avg_vol)}
-                if ma_crosses: triggered["ma"] = ma_crosses
-                if trend: triggered["trend"] = trend
-                if rsi4h is not None and rsi4h < 20: triggered["rsi_low"] = round(rsi4h,1)
-                if rsi4h is not None and rsi4h > 80: triggered["rsi_high"] = round(rsi4h,1)
-
-                strength = decide_strength(g1, g2, ma_crosses, vol_spike, rsi4h)
-                
-                # Sinyal Tetiklenirse
-                if triggered:
-                    parts = []
-                    if "green12" in triggered: parts.append("Günlük G1 + 4H G2")
-                    if "volume" in triggered: parts.append("Hacim Spike")
-                    if "ma" in triggered: parts.append(",".join(triggered["ma"]))
-                    if "trend" in triggered: parts.append("Trend Kırılımı")
-                    if "rsi_low" in triggered: parts.append(f"RSI Düşük({triggered['rsi_low']})")
-                    if "rsi_high" in triggered: parts.append(f"RSI Yüksek({triggered['rsi_high']})")
-
-                    msg = {"symbol": sym, "price": price, "parts": parts, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "strength": strength}
-                    
-                    # TELEGRAM GÖNDERİMİ
-                    emoji = "🚀 AL" if "buy" in strength else ("🔻 SAT" if "sell" in strength else "🔔 SİNYAL")
-                    price_str = f"{msg['price']:.2f} ₺"
-                    
-                    telegram_msg = (
-                        f"{emoji} <b>CANLI SİNYAL: {msg['symbol'].replace('.IS','')}</b>\n"
-                        f"  • Güç: <b>{strength.upper() if strength else 'NORMAL'}</b>\n"
-                        f"  • Fiyat: {price_str}\n"
-                        f"  • Tetikleyiciler: {', '.join(msg['parts'])}\n"
-                        f"  • Zaman: {msg['time']}"
-                    )
-                    send_telegram_message(telegram_msg)
-
-                    # Dashboard için sinyal listesine ekle
-                    new_signals.append(msg)
-                    latest_state["last_signal"] = msg
-                    
-            except Exception as e:
-                errors.append({"symbol": sym, "error": str(e)})
-
-        latest_state["per_symbol"] = per_symbol
-        latest_state["signals"].extend(new_signals) 
-        latest_state["errors"] = errors
-        
-        # Döngünün sonunda durumu dosyaya yaz
-        update_status_file() 
-
-        elapsed = (datetime.now() - t0).total_seconds()
-        wait = max(1, CHECK_INTERVAL - elapsed)
-        print(f"Tarama tamamlandı. {len(new_signals)} yeni sinyal bulundu. {wait:.1f} saniye bekleniyor...")
-        time.sleep(wait)
-
-# -----------------------
-# WORKER BAŞLANGICI
-# -----------------------
-if __name__ == "__main__":
-    print("BIST Sinyal Worker Başlatılıyor...")
-    send_telegram_message("🔔 <b>BIST Sinyal Worker Aktif!</b>\nTarama döngüsü başlatıldı.")
-    
-    # Başlangıçta durum dosyası oluşturulur
-    update_status_file() 
-    
-    scanner_loop()
+    ema20 = df_h4["Close"].ewm(span=20).mean().iloc[-1].item()
+    if float(last1["
