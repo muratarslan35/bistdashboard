@@ -46,8 +46,9 @@ latest_state = {
 # -----------------------
 def send_telegram_message(message):
     """Mesajı config.py'daki tüm CHAT_IDS'lere HTML formatında gönderir."""
-    if not TELEGRAM_TOKEN or not CHAT_IDS:
-        print("Telegram ayarları eksik. Mesaj gönderilemedi.")
+    # Hata Giderildi: Eksik ayar kontrolü artık güncel config'e bakacak.
+    if TELEGRAM_TOKEN == "YOUR_TOKEN" or not CHAT_IDS:
+        print("Telegram ayarları eksik veya güncel değil. Mesaj gönderilemedi.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -105,7 +106,6 @@ def compute_rsi(series: pd.Series, period=RSI_PERIOD):
     rs = gain.rolling(period).mean() / loss.rolling(period).mean()
     rsi = 100 - (100 / (1 + rs))
     try: 
-        # Hata Giderildi: `.item()` kullanılarak FutureWarning'lar önlendi
         return float(rsi.iloc[-1].item())
     except: 
         return None
@@ -118,7 +118,6 @@ def support_resistance(df, lookback=SR_LOOKBACK, order=SR_ORDER):
     min_idx = argrelextrema(vals, np.less, order=order)[0]
     local_max = [float(vals[i]) for i in max_idx]
     local_min = [float(vals[i]) for i in min_idx]
-    # Hata Giderildi: `.item()` kullanılarak FutureWarning'lar önlendi
     cur = float(prices.iloc[-1].item())
     supports = sorted([v for v in local_min if v < cur], reverse=True)[:3]
     resistances = sorted([v for v in local_max if v > cur])[:3]
@@ -130,7 +129,6 @@ def detect_ma_crosses(df_day):
     ma50 = df_day["Close"].rolling(50).mean()
     ma200 = df_day["Close"].rolling(200).mean()
     try:
-        # Hata Giderildi: `.item()` kullanılarak FutureWarning'lar önlendi
         ma20_now, ma20_prev = float(ma20.iloc[-1].item()), float(ma20.iloc[-2].item())
         ma50_now, ma50_prev = float(ma50.iloc[-1].item()), float(ma50.iloc[-2].item())
         ma200_now, ma200_prev = float(ma200.iloc[-1].item()), float(ma200.iloc[-2].item())
@@ -146,7 +144,6 @@ def detect_volume_spike(df_h4):
     if df_h4 is None or df_h4.empty or len(df_h4) < 22: return False, None, None
     vols = df_h4["Volume"].astype(float)
     avg20 = vols.iloc[-21:-1].mean()
-    # Hata Giderildi: `.item()` kullanılarak FutureWarning'lar önlendi
     last = float(vols.iloc[-1].item())
     if avg20 > 0 and last > avg20 * VOL_FACTOR: return True, last, avg20
     return False, last, avg20
@@ -154,7 +151,6 @@ def detect_volume_spike(df_h4):
 def is_yesil1_daily(df_day):
     if df_day is None or len(df_day) < 2: return False
     last = df_day.iloc[-1]
-    # Hata Giderildi: `.item()` kullanılarak FutureWarning'lar önlendi
     if float(last["Close"].item()) <= float(last["Open"].item()): return False
     rsi_prev = compute_rsi(df_day["Close"].iloc[:-1])
     rsi_now = compute_rsi(df_day["Close"])
@@ -165,11 +161,9 @@ def is_yesil2_4h(df_h4):
     if df_h4 is None or len(df_h4) < 2: return False
     last1 = df_h4.iloc[-1]
     last2 = df_4h.iloc[-2]
-    # Hata Giderildi: `.item()` kullanılarak FutureWarning'lar önlendi
     if not (float(last1["Close"].item()) > float(last1["Open"].item()) and float(last2["Close"].item()) > float(last2["Open"].item())): return False
     rsi_now = compute_rsi(df_h4["Close"])
     if rsi_now is None or rsi_now > 60: return False
-    # Hata Giderildi: `.item()` kullanılarak FutureWarning'lar önlendi
     ema20 = df_h4["Close"].ewm(span=20).mean().iloc[-1].item()
     if float(last1["Close"].item()) < ema20: return False
     return True
@@ -178,16 +172,13 @@ def today_trend_break(df):
     if df is None or len(df) < 5: return None
     supports, resistances = support_resistance(df, lookback=SR_LOOKBACK, order=SR_ORDER)
     closes, highs, lows = df["Close"].values, df["High"].values, df["Low"].values
-    # Hata Giderildi: `.item()` kullanılarak FutureWarning'lar önlendi
     prev_close = float(closes[-2].item())
     if resistances:
         last_res = resistances[-1]
-        # Hata Giderildi: `.item()` kullanılarak FutureWarning'lar önlendi
         today_high = float(highs[-1].item())
         if today_high > last_res and prev_close <= last_res: return ("res_break", last_res)
     if supports:
         last_sup = supports[0]
-        # Hata Giderildi: `.item()` kullanılarak FutureWarning'lar önlendi
         today_low = float(lows[-1].item())
         if today_low < last_sup and prev_close >= last_sup: return ("sup_break", last_sup)
     return None
@@ -216,7 +207,6 @@ def scanner_loop():
                 df_4h = safe_download(sym, period="90d", interval="4h")
                 if df_day is None or df_4h is None: continue
                 
-                # Hata Giderildi: `.item()` kullanılarak FutureWarning'lar önlendi
                 price = float(df_4h["Close"].iloc[-1].item())
                 rsi4h = compute_rsi(df_4h["Close"])
                 supports, resistances = support_resistance(df_4h)
@@ -288,6 +278,7 @@ def scanner_loop():
 # -----------------------
 if __name__ == "__main__":
     print("BIST Sinyal Worker Başlatılıyor...")
+    # config.py GÜNCEL OLDUĞU İÇİN İLK MESAJ GÖNDERİLECEK
     send_telegram_message("🔔 <b>BIST Sinyal Worker Aktif!</b>\nTarama döngüsü başlatıldı.")
     
     update_status_file() 
